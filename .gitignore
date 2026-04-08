@@ -1,0 +1,66 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test & Coverage
+coverage/
+*.lcov
+test-results/
+junit.xml
+
+# Security scan reports (generated)
+reports/*.json
+reports/*.sarif
+reports/*.html
+reports/*.csv
+reports/*.xml
+!reports/.gitkeep
+
+# Docker
+*.log
+
+# Prisma
+app/backend/prisma/*.db
+app/backend/prisma/*.db-journal
+
+# Evidence screenshots are tracked
+# evidence/
+
+# Grafana data
+infrastructure/grafana/data/
+
+# SBOM outputs
+*.spdx.json
+*.cdx.json
+
+# Cosign
+*.sig
+*.pem
+
+# Misc
+*.tgz
+*.tar.gz
+.cache/
+tmp/

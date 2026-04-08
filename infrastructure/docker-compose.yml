@@ -1,0 +1,71 @@
+# ============================================================
+# SecureTrack — Full Staging Stack
+# ============================================================
+
+services:
+  # --- Database ---
+  db:
+    image: postgres:16-alpine
+    container_name: securetrack-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-securetrack}
+      POSTGRES_USER: ${POSTGRES_USER:-securetrack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-securetrack_pass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-securetrack}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - securetrack
+
+  # --- Backend API ---
+  backend:
+    image: ${BACKEND_IMAGE:-securetrack-backend:latest}
+    build:
+      context: ../app/backend
+      dockerfile: Dockerfile
+    container_name: securetrack-backend
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-securetrack}:${POSTGRES_PASSWORD:-securetrack_pass}@db:5432/${POSTGRES_DB:-securetrack}
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+    ports:
+      - "5000:5000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - securetrack
+
+  # --- Frontend ---
+  frontend:
+    image: ${FRONTEND_IMAGE:-securetrack-frontend:latest}
+    build:
+      context: ../app/frontend
+      dockerfile: Dockerfile
+    container_name: securetrack-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - securetrack
+
+volumes:
+  pgdata:
+
+networks:
+  securetrack:
+    driver: bridge

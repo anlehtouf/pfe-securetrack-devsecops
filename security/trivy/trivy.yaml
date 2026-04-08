@@ -1,0 +1,19 @@
+# Trivy configuration for SecureTrack
+# Reference: https://aquasecurity.github.io/trivy
+
+severity:
+  - CRITICAL
+  - HIGH
+
+scan:
+  security-checks:
+    - vuln
+    - secret
+    - config
+
+vulnerability:
+  type:
+    - os
+    - library
+
+format: json

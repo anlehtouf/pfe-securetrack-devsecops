@@ -1,0 +1,4 @@
+# Trivy ignore file — accepted risks with justification
+# Format: CVE-ID  # Justification
+# Example:
+# CVE-2023-XXXXX  # False positive, not exploitable in our context

@@ -1,0 +1,14 @@
+# SecureTrack Code Owners
+# These users will be automatically requested for review on PRs
+
+# Default owners for everything
+*                           @anas
+
+# CI/CD workflows
+/.github/workflows/         @anas
+
+# Security configs — require extra review
+/security/                  @anas
+
+# Infrastructure
+/infrastructure/            @anas

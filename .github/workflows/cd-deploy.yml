@@ -1,0 +1,78 @@
+name: CD Deploy to Staging
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/securetrack-backend
+
+jobs:
+  # ============================================================
+  # STAGE 18: Deploy to Staging
+  # ============================================================
+  deploy:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via Docker Compose
+        run: |
+          echo "Deploying image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          echo "## Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "- Image: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-$(echo ${{ github.sha }} | cut -c1-7)\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Environment: staging" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+
+          # For self-hosted runner or SSH deploy:
+          # ssh ${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }} << 'EOF'
+          #   cd /opt/securetrack
+          #   export IMAGE_TAG=sha-$(echo ${{ github.sha }} | cut -c1-7)
+          #   docker compose pull
+          #   docker compose up -d
+          # EOF
+
+          # For local/demo: docker compose up
+          echo "Staging deployment triggered"
+
+  # ============================================================
+  # STAGE 19: Health Check
+  # ============================================================
+  health-check:
+    name: Post-Deploy Health Check
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for application startup
+        run: sleep 10
+
+      - name: Health check
+        run: |
+          STAGING_URL="${{ vars.STAGING_URL || 'http://localhost:5000' }}"
+          MAX_RETRIES=12
+          RETRY_INTERVAL=5
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$STAGING_URL/api/health" || echo "000")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "Health check passed (attempt $i)"
+              echo "### Health Check: PASSED" >> $GITHUB_STEP_SUMMARY
+              exit 0
+            fi
+            echo "Attempt $i/$MAX_RETRIES: HTTP $HTTP_STATUS - retrying in ${RETRY_INTERVAL}s..."
+            sleep $RETRY_INTERVAL
+          done
+
+          echo "### Health Check: FAILED" >> $GITHUB_STEP_SUMMARY
+          echo "Application did not respond with HTTP 200 after $MAX_RETRIES attempts"
+          exit 1

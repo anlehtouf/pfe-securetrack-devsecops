@@ -1,0 +1,23 @@
+# Prometheus configuration for SecureTrack DevSecOps
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # CI/CD pipeline metrics (via Pushgateway)
+  - job_name: 'ci_pipeline'
+    honor_labels: true
+    static_configs:
+      - targets: ['pushgateway:9091']
+
+  # Backend application metrics (if Express prometheus middleware is added)
+  - job_name: 'securetrack-backend'
+    metrics_path: '/api/metrics'
+    static_configs:
+      - targets: ['backend:5000']
+    scrape_interval: 30s

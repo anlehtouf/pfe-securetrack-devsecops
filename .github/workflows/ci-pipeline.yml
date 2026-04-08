@@ -1,0 +1,721 @@
+name: CI Security Pipeline
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  pull-requests: write
+
+env:
+  NODE_VERSION: '20'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/securetrack-backend
+
+jobs:
+  # ============================================================
+  # STAGE 1-3: Setup, Install, Cache
+  # ============================================================
+  install:
+    name: Install Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: app/backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: app/backend
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: app/frontend
+        run: npm ci
+
+      - name: Cache backend node_modules
+        uses: actions/cache/save@v4
+        with:
+          path: app/backend/node_modules
+          key: backend-modules-${{ hashFiles('app/backend/package-lock.json') }}
+
+      - name: Cache frontend node_modules
+        uses: actions/cache/save@v4
+        with:
+          path: app/frontend/node_modules
+          key: frontend-modules-${{ hashFiles('app/frontend/package-lock.json') }}
+
+  # ============================================================
+  # STAGE 4: Linting
+  # ============================================================
+  lint:
+    name: Lint Code
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Restore backend modules
+        uses: actions/cache/restore@v4
+        with:
+          path: app/backend/node_modules
+          key: backend-modules-${{ hashFiles('app/backend/package-lock.json') }}
+
+      - name: Restore frontend modules
+        uses: actions/cache/restore@v4
+        with:
+          path: app/frontend/node_modules
+          key: frontend-modules-${{ hashFiles('app/frontend/package-lock.json') }}
+
+      - name: Lint backend
+        working-directory: app/backend
+        run: npm run lint
+
+      - name: Lint frontend
+        working-directory: app/frontend
+        run: npm run lint
+
+  # ============================================================
+  # STAGE 5-6: Unit Tests + Coverage
+  # ============================================================
+  test-backend:
+    name: Backend Tests + Coverage
+    needs: install
+    runs-on: ubuntu-latest
+    outputs:
+      coverage: ${{ steps.coverage.outputs.percentage }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Restore backend modules
+        uses: actions/cache/restore@v4
+        with:
+          path: app/backend/node_modules
+          key: backend-modules-${{ hashFiles('app/backend/package-lock.json') }}
+
+      - name: Run tests with coverage
+        working-directory: app/backend
+        run: npm test -- --coverage --reporters=default --reporters=jest-junit
+        env:
+          JEST_JUNIT_OUTPUT_DIR: ./reports
+          JEST_JUNIT_OUTPUT_NAME: junit.xml
+
+      - name: Extract coverage percentage
+        id: coverage
+        working-directory: app/backend
+        run: |
+          COVERAGE=$(cat coverage/coverage-summary.json | jq '.total.lines.pct')
+          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+          echo "### Test Coverage: ${COVERAGE}%" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: app/backend/coverage/lcov.info
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-results
+          path: app/backend/reports/junit.xml
+
+  test-frontend:
+    name: Frontend Tests
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Restore frontend modules
+        uses: actions/cache/restore@v4
+        with:
+          path: app/frontend/node_modules
+          key: frontend-modules-${{ hashFiles('app/frontend/package-lock.json') }}
+
+      - name: Run frontend tests
+        working-directory: app/frontend
+        run: npx vitest run --coverage
+
+      - name: Upload frontend coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: app/frontend/coverage/
+
+  # ============================================================
+  # STAGE 7: Secret Scanning (Gitleaks)
+  # ============================================================
+  secret-scan:
+    name: Secret Scan (Gitleaks)
+    needs: install
+    runs-on: ubuntu-latest
+    outputs:
+      findings: ${{ steps.scan.outputs.findings }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        id: scan
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: --config=security/gitleaks/.gitleaks.toml --report-format=sarif --report-path=reports/gitleaks-report.sarif
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Count findings
+        if: always()
+        run: |
+          if [ -f reports/gitleaks-report.sarif ]; then
+            COUNT=$(jq '[.runs[].results[]] | length' reports/gitleaks-report.sarif)
+          else
+            COUNT=0
+          fi
+          echo "findings=$COUNT" >> $GITHUB_OUTPUT
+          echo "### Gitleaks: $COUNT secrets found" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/gitleaks-report.sarif
+          category: gitleaks
+        continue-on-error: true
+
+      - name: Upload Gitleaks report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: reports/gitleaks-report.sarif
+
+  # ============================================================
+  # STAGE 8: SAST (Semgrep)
+  # ============================================================
+  sast:
+    name: SAST (Semgrep)
+    needs: install
+    runs-on: ubuntu-latest
+    outputs:
+      high_count: ${{ steps.count.outputs.high_count }}
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config=p/security-audit \
+            --config=p/nodejs \
+            --config=p/react \
+            --config=security/semgrep/.semgrep.yml \
+            --sarif \
+            --output=reports/semgrep-report.sarif \
+            --json \
+            --json-output=reports/semgrep-report.json \
+            app/
+        continue-on-error: true
+
+      - name: Count high/critical findings
+        id: count
+        run: |
+          if [ -f reports/semgrep-report.json ]; then
+            HIGH=$(jq '[.results[] | select(.extra.severity == "ERROR" or .extra.severity == "WARNING")] | length' reports/semgrep-report.json)
+          else
+            HIGH=0
+          fi
+          echo "high_count=$HIGH" >> $GITHUB_OUTPUT
+          echo "### Semgrep: $HIGH high/critical findings" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/semgrep-report.sarif
+          category: semgrep
+        continue-on-error: true
+
+      - name: Upload Semgrep reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: |
+            reports/semgrep-report.sarif
+            reports/semgrep-report.json
+
+  # ============================================================
+  # STAGE 9: Code Quality (SonarCloud)
+  # ============================================================
+  sonar:
+    name: Code Quality (SonarCloud)
+    needs: [test-backend, test-frontend]
+    runs-on: ubuntu-latest
+    outputs:
+      quality_gate: ${{ steps.gate.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download backend coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-coverage
+          path: app/backend/coverage/
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Check Quality Gate
+        id: gate
+        uses: SonarSource/sonarqube-quality-gate-action@master
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # ============================================================
+  # STAGE 10: Dependency Vulnerability Scan
+  # ============================================================
+  dependency-scan:
+    name: Dependency Scan (Trivy)
+    needs: install
+    runs-on: ubuntu-latest
+    outputs:
+      critical: ${{ steps.count.outputs.critical }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: 'app/backend'
+          format: 'json'
+          output: 'reports/trivy-deps-report.json'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Count critical findings
+        id: count
+        run: |
+          if [ -f reports/trivy-deps-report.json ]; then
+            CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' reports/trivy-deps-report.json)
+          else
+            CRITICAL=0
+          fi
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "### Trivy Deps: $CRITICAL critical vulnerabilities" >> $GITHUB_STEP_SUMMARY
+
+      - name: Run npm audit
+        working-directory: app/backend
+        run: npm audit --audit-level=high --json > ../../reports/npm-audit-report.json || true
+
+      - name: Upload dependency reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-reports
+          path: |
+            reports/trivy-deps-report.json
+            reports/npm-audit-report.json
+
+  # ============================================================
+  # SECURITY GATE #1: Source & Code Checks
+  # ============================================================
+  security-gate-1:
+    name: Security Gate 1 — Source & Code
+    needs: [secret-scan, sast, sonar, dependency-scan, lint, test-backend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate Gate 1
+        run: |
+          echo "## Security Gate #1 — Source & Code" >> $GITHUB_STEP_SUMMARY
+          PASS=true
+
+          # Check secrets
+          SECRETS="${{ needs.secret-scan.outputs.findings }}"
+          if [ "$SECRETS" != "0" ] && [ -n "$SECRETS" ]; then
+            echo "| Secret Scan | FAIL | $SECRETS secrets found |" >> $GITHUB_STEP_SUMMARY
+            PASS=false
+          else
+            echo "| Secret Scan | PASS | 0 secrets |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Check SAST
+          SAST="${{ needs.sast.outputs.high_count }}"
+          if [ "$SAST" != "0" ] && [ -n "$SAST" ]; then
+            echo "| SAST | FAIL | $SAST high/critical findings |" >> $GITHUB_STEP_SUMMARY
+            PASS=false
+          else
+            echo "| SAST | PASS | 0 high/critical |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Check SonarCloud
+          SONAR="${{ needs.sonar.outputs.quality_gate }}"
+          if [ "$SONAR" != "passed" ] && [ -n "$SONAR" ]; then
+            echo "| SonarCloud | FAIL | Quality gate: $SONAR |" >> $GITHUB_STEP_SUMMARY
+            PASS=false
+          else
+            echo "| SonarCloud | PASS | Quality gate passed |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Check dependencies
+          DEPS="${{ needs.dependency-scan.outputs.critical }}"
+          if [ "$DEPS" != "0" ] && [ -n "$DEPS" ]; then
+            echo "| Dep Scan | FAIL | $DEPS critical CVEs |" >> $GITHUB_STEP_SUMMARY
+            PASS=false
+          else
+            echo "| Dep Scan | PASS | 0 critical |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "$PASS" = "false" ]; then
+            echo ""
+            echo "### GATE 1: BLOCKED" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          echo ""
+          echo "### GATE 1: PASSED" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================
+  # STAGE 11: Build Docker Image
+  # ============================================================
+  build-image:
+    name: Build Docker Image
+    needs: security-gate-1
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build image (local)
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: app/backend
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image for scanning
+        run: |
+          docker save ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-$(echo ${{ github.sha }} | cut -c1-7) -o /tmp/image.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/image.tar
+          retention-days: 1
+
+  # ============================================================
+  # STAGE 12: Dockerfile Lint (Hadolint)
+  # ============================================================
+  hadolint:
+    name: Dockerfile Lint (Hadolint)
+    needs: security-gate-1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint backend Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/backend/Dockerfile
+          failure-threshold: error
+
+      - name: Lint frontend Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/frontend/Dockerfile
+          failure-threshold: error
+
+  # ============================================================
+  # STAGE 13: Container Image Scan (Trivy)
+  # ============================================================
+  image-scan:
+    name: Image Scan (Trivy)
+    needs: build-image
+    runs-on: ubuntu-latest
+    outputs:
+      critical: ${{ steps.count.outputs.critical }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load image
+        run: docker load -i /tmp/image.tar
+
+      - name: Run Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'image'
+          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}'
+          format: 'json'
+          output: 'reports/trivy-image-report.json'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Count critical image findings
+        id: count
+        run: |
+          if [ -f reports/trivy-image-report.json ]; then
+            CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' reports/trivy-image-report.json)
+          else
+            CRITICAL=0
+          fi
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "### Trivy Image: $CRITICAL critical vulnerabilities" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload image scan report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-image-report
+          path: reports/trivy-image-report.json
+
+  # ============================================================
+  # STAGE 14: SBOM Generation (Syft)
+  # ============================================================
+  sbom:
+    name: SBOM Generation (Syft)
+    needs: build-image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load image
+        run: docker load -i /tmp/image.tar
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}'
+          format: spdx-json
+          output-file: reports/sbom-spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: reports/sbom-spdx.json
+
+  # ============================================================
+  # STAGE 16: Policy-as-Code (Conftest)
+  # ============================================================
+  policy-check:
+    name: Policy Check (Conftest)
+    needs: security-gate-1
+    runs-on: ubuntu-latest
+    outputs:
+      violations: ${{ steps.check.outputs.violations }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Conftest
+        run: |
+          LATEST=$(curl -s https://api.github.com/repos/open-policy-agent/conftest/releases/latest | jq -r .tag_name | sed 's/v//')
+          curl -sL "https://github.com/open-policy-agent/conftest/releases/download/v${LATEST}/conftest_${LATEST}_Linux_x86_64.tar.gz" | tar xz
+          sudo mv conftest /usr/local/bin/
+
+      - name: Test policies
+        run: conftest verify --policy security/policies/
+
+      - name: Check backend Dockerfile
+        id: check
+        run: |
+          RESULT=$(conftest test app/backend/Dockerfile --policy security/policies/ --output json 2>&1) || true
+          VIOLATIONS=$(echo "$RESULT" | jq '[.[].failures[]?] | length')
+          echo "violations=$VIOLATIONS" >> $GITHUB_OUTPUT
+          echo "### Conftest: $VIOLATIONS policy violations" >> $GITHUB_STEP_SUMMARY
+          if [ "$VIOLATIONS" != "0" ]; then
+            echo "$RESULT" | jq '.[].failures[]?.msg'
+            exit 1
+          fi
+
+  # ============================================================
+  # SECURITY GATE #2: Container Security
+  # ============================================================
+  security-gate-2:
+    name: Security Gate 2 — Container
+    needs: [image-scan, hadolint, policy-check, sbom]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate Gate 2
+        run: |
+          echo "## Security Gate #2 — Container" >> $GITHUB_STEP_SUMMARY
+          PASS=true
+
+          IMAGE_CRITICAL="${{ needs.image-scan.outputs.critical }}"
+          if [ "$IMAGE_CRITICAL" != "0" ] && [ -n "$IMAGE_CRITICAL" ]; then
+            echo "| Image Scan | FAIL | $IMAGE_CRITICAL critical CVEs |" >> $GITHUB_STEP_SUMMARY
+            PASS=false
+          else
+            echo "| Image Scan | PASS | 0 critical |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          POLICY="${{ needs.policy-check.outputs.violations }}"
+          if [ "$POLICY" != "0" ] && [ -n "$POLICY" ]; then
+            echo "| Policy Check | FAIL | $POLICY violations |" >> $GITHUB_STEP_SUMMARY
+            PASS=false
+          else
+            echo "| Policy Check | PASS | 0 violations |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "| Hadolint | PASS | (would have failed job) |" >> $GITHUB_STEP_SUMMARY
+          echo "| SBOM | PASS | Generated |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$PASS" = "false" ]; then
+            echo "### GATE 2: BLOCKED" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+          echo "### GATE 2: PASSED" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================
+  # STAGE 15+17: Sign + Push Image
+  # ============================================================
+  sign-and-push:
+    name: Sign & Push Image
+    needs: [security-gate-2, build-image]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v5
+        with:
+          context: app/backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image with Cosign (keyless)
+        run: |
+          cosign sign --yes \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+        env:
+          COSIGN_EXPERIMENTAL: 1
+
+      - name: Verify signature
+        run: |
+          cosign verify \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp="github.com/${{ github.repository }}" \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }} | jq .
+          echo "### Image signed and verified" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================
+  # STAGE 22: Pipeline Summary
+  # ============================================================
+  pipeline-summary:
+    name: Pipeline Summary
+    needs: [security-gate-1, security-gate-2, test-backend, secret-scan, sast, dependency-scan, image-scan, policy-check]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## Pipeline Security Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Tests | ${{ needs.test-backend.result }} | Coverage: ${{ needs.test-backend.outputs.coverage }}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secret Scan | ${{ needs.secret-scan.result }} | Findings: ${{ needs.secret-scan.outputs.findings }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SAST | ${{ needs.sast.result }} | High/Crit: ${{ needs.sast.outputs.high_count }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dep Scan | ${{ needs.dependency-scan.result }} | Critical: ${{ needs.dependency-scan.outputs.critical }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Scan | ${{ needs.image-scan.result }} | Critical: ${{ needs.image-scan.outputs.critical }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Policy Check | ${{ needs.policy-check.result }} | Violations: ${{ needs.policy-check.outputs.violations }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Gate 1 | ${{ needs.security-gate-1.result }} | Source & Code |" >> $GITHUB_STEP_SUMMARY
+          echo "| Gate 2 | ${{ needs.security-gate-2.result }} | Container |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.security-gate-2.result }}" = "success" ]; then
+            echo "### PIPELINE VERDICT: APPROVED" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### PIPELINE VERDICT: BLOCKED" >> $GITHUB_STEP_SUMMARY
+          fi

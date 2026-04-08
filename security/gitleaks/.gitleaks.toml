@@ -1,0 +1,37 @@
+# Gitleaks configuration for SecureTrack
+# Reference: https://github.com/gitleaks/gitleaks
+
+title = "SecureTrack Gitleaks Config"
+
+[extend]
+# Use default gitleaks rules as base
+useDefault = true
+
+# Custom rules for this project
+[[rules]]
+id = "hardcoded-jwt-secret"
+description = "Hardcoded JWT secret detected"
+regex = '''(?i)(jwt[_-]?secret|token[_-]?secret)\s*[=:]\s*['"][^'"]{5,}['"]'''
+tags = ["secret", "jwt"]
+
+[[rules]]
+id = "hardcoded-api-key"
+description = "Hardcoded API key detected"
+regex = '''(?i)(api[_-]?key|apikey)\s*[=:]\s*['"][a-zA-Z0-9_\-]{10,}['"]'''
+tags = ["secret", "api-key"]
+
+[[rules]]
+id = "hardcoded-db-password"
+description = "Hardcoded database password"
+regex = '''(?i)(db[_-]?password|database[_-]?password|pg[_-]?password)\s*[=:]\s*['"][^'"]{3,}['"]'''
+tags = ["secret", "database"]
+
+# Allowlist — files and paths to ignore
+[allowlist]
+paths = [
+  '''\.env\.example$''',
+  '''\.gitleaks\.toml$''',
+  '''tests?/.*''',
+  '''docs/.*''',
+  '''\.md$''',
+]

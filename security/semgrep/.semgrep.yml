@@ -1,0 +1,75 @@
+rules:
+  # Custom rule: Detect hardcoded secrets in JavaScript
+  - id: hardcoded-secret-assignment
+    patterns:
+      - pattern: |
+          const $SECRET = "..."
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: (?i)(secret|password|api_key|apikey|token|private_key)
+    message: >
+      Hardcoded secret detected in variable '$SECRET'.
+      Move this value to an environment variable.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+  # Custom rule: Detect console.log with sensitive data
+  - id: sensitive-data-in-log
+    patterns:
+      - pattern: |
+          console.log(..., $VAR, ...)
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)(password|secret|token|credential|ssn)
+    message: >
+      Potentially sensitive data '$VAR' is being logged.
+      Remove sensitive data from log statements.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+
+  # Custom rule: Detect weak password validation
+  - id: weak-password-validation
+    pattern: |
+      if ($PASSWORD.length < 6) { ... }
+    message: >
+      Weak password policy detected. Minimum password length should be at least 8 characters.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-521: Weak Password Requirements"
+
+  # Custom rule: Detect missing rate limiting on auth routes
+  - id: express-auth-no-rate-limit
+    patterns:
+      - pattern: |
+          router.post("/login", $HANDLER)
+      - pattern-not: |
+          router.post("/login", $LIMITER, $HANDLER)
+    message: >
+      Authentication endpoint lacks rate limiting.
+      Add a rate limiter middleware to prevent brute-force attacks.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-307: Improper Restriction of Excessive Authentication Attempts"
+
+  # Custom rule: Detect CORS wildcard
+  - id: cors-wildcard
+    pattern: |
+      cors({ origin: "*" })
+    message: >
+      CORS is configured with wildcard origin.
+      Restrict CORS to specific trusted domains.
+    languages: [javascript, typescript]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-942: Permissive Cross-domain Policy"

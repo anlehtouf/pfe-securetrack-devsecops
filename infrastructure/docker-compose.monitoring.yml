@@ -1,0 +1,58 @@
+# ============================================================
+# SecureTrack — Monitoring Stack (Prometheus + Grafana)
+# Usage: docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+# ============================================================
+
+services:
+  # --- Prometheus ---
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: securetrack-prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+    networks:
+      - securetrack
+
+  # --- Pushgateway (for CI metrics) ---
+  pushgateway:
+    image: prom/pushgateway:latest
+    container_name: securetrack-pushgateway
+    ports:
+      - "9091:9091"
+    networks:
+      - securetrack
+
+  # --- Grafana ---
+  grafana:
+    image: grafana/grafana:latest
+    container_name: securetrack-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - securetrack
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  securetrack:
+    external: true
+    name: infrastructure_securetrack
