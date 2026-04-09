@@ -33,10 +33,8 @@ function IncidentDetail() {
         <p className={`severity-${incident.severity}`}>Severity: {incident.severity}</p>
         <p className={`status-${incident.status}`}>Status: {incident.status}</p>
 
-        {/* V4: INTENTIONAL VULNERABILITY — XSS via dangerouslySetInnerHTML */}
-        {/* FIX: Use {incident.description} directly */}
         <h3 style={{ marginTop: '1rem' }}>Description</h3>
-        <div dangerouslySetInnerHTML={{ __html: incident.description }} />
+        <p>{incident.description}</p>
 
         <p style={{ marginTop: '1rem' }}>
           <strong>Reported by:</strong> {incident.reportedBy?.name} ({incident.reportedBy?.email})

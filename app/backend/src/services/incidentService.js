@@ -6,13 +6,8 @@ const list = async ({ status, severity, search }) => {
   if (status) where.status = status;
   if (severity) where.severity = severity;
 
-  // V3: INTENTIONAL VULNERABILITY — SQL injection via string concatenation
-  // FIX: Use Prisma's built-in filtering: where.title = { contains: search, mode: 'insensitive' }
   if (search) {
-    const results = await prisma.$queryRawUnsafe(
-      `SELECT * FROM "Incident" WHERE title LIKE '%${search}%' ORDER BY "createdAt" DESC`
-    );
-    return results;
+    where.title = { contains: search, mode: 'insensitive' };
   }
 
   const incidents = await prisma.incident.findMany({

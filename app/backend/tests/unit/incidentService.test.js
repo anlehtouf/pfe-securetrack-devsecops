@@ -50,12 +50,19 @@ describe('IncidentService', () => {
       );
     });
 
-    it('should use raw query for search (vulnerable path)', async () => {
-      prisma.$queryRawUnsafe.mockResolvedValue([]);
+    it('should use safe Prisma filter for search', async () => {
+      prisma.incident.findMany.mockResolvedValue([]);
 
       await incidentService.list({ search: 'test' });
 
-      expect(prisma.$queryRawUnsafe).toHaveBeenCalled();
+      expect(prisma.incident.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            title: { contains: 'test', mode: 'insensitive' },
+          }),
+        })
+      );
+      expect(prisma.$queryRawUnsafe).not.toHaveBeenCalled();
     });
   });
 

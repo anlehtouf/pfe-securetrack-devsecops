@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const morgan = require('morgan');
 const dotenv = require('dotenv');
 
@@ -18,17 +19,14 @@ const PORT = process.env.PORT || 5000;
 // MIDDLEWARE
 // ============================================================
 
-// V14: INTENTIONAL VULNERABILITY — CORS wildcard allows any origin
-// FIX: cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:3000' })
-app.use(cors({ origin: '*' }));
+// Security headers
+app.use(helmet());
 
-// V9: INTENTIONAL VULNERABILITY — Debug mode enabled in error handler
-// FIX: Set debug: false or use NODE_ENV check
+// Restrict CORS to configured origin only
+app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:3000' }));
+
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10kb' }));
-
-// V10: INTENTIONAL VULNERABILITY — Missing helmet security headers
-// FIX: app.use(helmet());
 
 // Prometheus metrics
 app.use(metricsMiddleware);
@@ -41,8 +39,8 @@ app.use('/api/incidents', incidentRoutes);
 app.use('/api/health', healthRoutes);
 app.get('/api/metrics', metricsEndpoint);
 
-// Error handler — V9: debug mode enabled
-app.use(errorHandler({ debug: true }));
+// Error handler — no debug info in production
+app.use(errorHandler({ debug: process.env.NODE_ENV === 'development' }));
 
 // ============================================================
 // SERVER

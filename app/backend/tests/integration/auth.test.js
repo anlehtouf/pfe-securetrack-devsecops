@@ -4,7 +4,7 @@ const app = require('../../src/app');
 // Mock Prisma for integration tests (use real DB in CI with test database)
 jest.mock('@prisma/client', () => {
   const bcrypt = require('bcryptjs');
-  const hashedPassword = bcrypt.hashSync('password123', 12);
+  const hashedPassword = bcrypt.hashSync('StrongPass1!', 12);
 
   const mockPrisma = {
     user: {
@@ -40,7 +40,7 @@ describe('Auth API', () => {
     it('should register a new user', async () => {
       const res = await request(app)
         .post('/api/auth/register')
-        .send({ email: 'new@test.com', password: 'securepass123', name: 'New User' });
+        .send({ email: 'new@test.com', password: 'SecurePass1!', name: 'New User' });
 
       expect(res.statusCode).toBe(201);
       expect(res.body.message).toBe('User created');
@@ -68,7 +68,7 @@ describe('Auth API', () => {
     it('should login with valid credentials', async () => {
       const res = await request(app)
         .post('/api/auth/login')
-        .send({ email: 'existing@test.com', password: 'password123' });
+        .send({ email: 'existing@test.com', password: 'StrongPass1!' });
 
       expect(res.statusCode).toBe(200);
       expect(res.body).toHaveProperty('token');

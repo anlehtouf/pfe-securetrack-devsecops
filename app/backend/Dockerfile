@@ -1,24 +1,21 @@
 # ============================================================
-# SecureTrack Backend — Production Dockerfile
+# SecureTrack Backend — Hardened Dockerfile
 # ============================================================
-# INTENTIONAL VULNERABILITIES (Phase 1 — Vulnerable Version):
-#   V6: Uses node:16 (EOL, many CVEs) instead of node:20-alpine
-#   V7: No USER directive (runs as root)
-#   V8: No HEALTHCHECK directive
-# These will be detected by Trivy, Hadolint, and Conftest
-# and fixed during the hardening phase.
+# Fixes applied:
+#   V6: node:20-alpine (minimal, supported base image)
+#   V7: USER directive — runs as non-root
+#   V8: HEALTHCHECK directive
 # ============================================================
 
-# V6: Vulnerable base image — should be node:20-alpine
-FROM node:16
+FROM node:20-alpine
 
 WORKDIR /app
 
 # Copy dependency files first for layer caching
 COPY package*.json ./
 
-# Install all dependencies (including devDependencies in vulnerable version)
-RUN npm install
+# Install production dependencies only
+RUN npm ci --omit=dev
 
 # Copy application source
 COPY . .
@@ -26,10 +23,16 @@ COPY . .
 # Generate Prisma Client
 RUN npx prisma generate
 
+# Create non-root user and take ownership
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup && \
+    chown -R appuser:appgroup /app
+
+USER appuser
+
 # Expose application port
 EXPOSE 5000
 
-# V7: No USER directive — runs as root (Hadolint DL3002, Conftest policy)
-# V8: No HEALTHCHECK — (Hadolint DL3009, Conftest policy)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD wget -qO- http://localhost:5000/api/health || exit 1
 
 CMD ["node", "src/app.js"]
