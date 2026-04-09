@@ -117,6 +117,9 @@ jobs:
         env:
           JEST_JUNIT_OUTPUT_DIR: ./reports
           JEST_JUNIT_OUTPUT_NAME: junit.xml
+          JWT_SECRET: test-secret-for-ci
+          NODE_ENV: test
+          CORS_ORIGIN: http://localhost:3000
 
       - name: Extract coverage percentage
         id: coverage

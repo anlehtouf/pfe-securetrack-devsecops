@@ -22,7 +22,7 @@ function IncidentDetail() {
       const res = await incidentApi.update(id, { status: newStatus });
       setIncident(res.data);
     } catch (err) {
-      alert('Failed to update status'); // eslint-disable-line no-alert
+      alert('Failed to update status');
     }
   };
 
