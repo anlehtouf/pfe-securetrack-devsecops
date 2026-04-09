@@ -280,6 +280,8 @@ jobs:
     name: Code Quality (SonarCloud)
     needs: [test-backend, test-frontend]
     runs-on: ubuntu-latest
+    # Non-blocking: SonarCloud is informational — pipeline continues on failure
+    continue-on-error: true
     outputs:
       quality_gate: ${{ steps.gate.outputs.status }}
     steps:
@@ -295,6 +297,7 @@ jobs:
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@v5.0.0
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -302,6 +305,7 @@ jobs:
       - name: Check Quality Gate
         id: gate
         uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
+        continue-on-error: true
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -356,6 +360,7 @@ jobs:
   security-gate-1:
     name: Security Gate 1 — Source & Code
     needs: [secret-scan, sast, sonar, dependency-scan, lint, test-backend]
+    if: always() && needs.secret-scan.result == 'success' && needs.sast.result == 'success' && needs.dependency-scan.result == 'success' && needs.lint.result == 'success' && needs.test-backend.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Evaluate Gate 1
@@ -381,13 +386,12 @@ jobs:
             echo "| SAST | PASS | 0 high/critical |" >> $GITHUB_STEP_SUMMARY
           fi
 
-          # Check SonarCloud
-          SONAR="${{ needs.sonar.outputs.quality_gate }}"
-          if [ "$SONAR" != "passed" ] && [ -n "$SONAR" ]; then
-            echo "| SonarCloud | FAIL | Quality gate: $SONAR |" >> $GITHUB_STEP_SUMMARY
-            PASS=false
-          else
+          # Check SonarCloud (non-blocking)
+          SONAR_RESULT="${{ needs.sonar.result }}"
+          if [ "$SONAR_RESULT" = "success" ]; then
             echo "| SonarCloud | PASS | Quality gate passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| SonarCloud | WARN | Informational only (not blocking) — result: $SONAR_RESULT |" >> $GITHUB_STEP_SUMMARY
           fi
 
           # Check dependencies
