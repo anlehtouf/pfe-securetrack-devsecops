@@ -504,11 +504,15 @@ jobs:
       - name: Load image
         run: docker load -i /tmp/image.tar
 
+      - name: Compute short SHA
+        id: sha
+        run: echo "short=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
       - name: Run Trivy image scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'image'
-          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}'
+          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.short }}'
           format: 'json'
           output: 'reports/trivy-image-report.json'
           severity: 'CRITICAL,HIGH'
@@ -538,6 +542,8 @@ jobs:
     needs: build-image
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download image
         uses: actions/download-artifact@v4
         with:
@@ -547,10 +553,17 @@ jobs:
       - name: Load image
         run: docker load -i /tmp/image.tar
 
+      - name: Compute short SHA
+        id: sha
+        run: echo "short=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}'
+          image: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.short }}'
           format: spdx-json
           output-file: reports/sbom-spdx.json
 
