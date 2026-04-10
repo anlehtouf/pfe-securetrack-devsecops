@@ -8,10 +8,11 @@ const register = async (req, res, next) => {
       return res.status(400).json({ error: 'Email, password, and name are required' });
     }
 
-    // V12: INTENTIONAL VULNERABILITY — Weak password policy
-    // FIX: Require minimum 8 chars, uppercase, number, special char
-    if (password.length < 4) {
-      return res.status(400).json({ error: 'Password too short' });
+    const passwordPolicy = /^(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#$%^&*]).{8,}$/;
+    if (!passwordPolicy.test(password)) {
+      return res.status(400).json({
+        error: 'Password must be at least 8 characters and include an uppercase letter, a number, and a special character.',
+      });
     }
 
     const user = await authService.register({ email, password, name });

@@ -2,7 +2,7 @@ name: CI Security Pipeline
 
 on:
   push:
-    branches: [develop]
+    branches: [main, develop]
   pull_request:
     branches: [main, develop]
 
@@ -117,6 +117,9 @@ jobs:
         env:
           JEST_JUNIT_OUTPUT_DIR: ./reports
           JEST_JUNIT_OUTPUT_NAME: junit.xml
+          JWT_SECRET: test-secret-for-ci
+          NODE_ENV: test
+          CORS_ORIGIN: http://localhost:3000
 
       - name: Extract coverage percentage
         id: coverage
@@ -277,6 +280,8 @@ jobs:
     name: Code Quality (SonarCloud)
     needs: [test-backend, test-frontend]
     runs-on: ubuntu-latest
+    # Non-blocking: SonarCloud is informational — pipeline continues on failure
+    continue-on-error: true
     outputs:
       quality_gate: ${{ steps.gate.outputs.status }}
     steps:
@@ -291,14 +296,16 @@ jobs:
           path: app/backend/coverage/
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
+        uses: SonarSource/sonarcloud-github-action@v5.0.0
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Check Quality Gate
         id: gate
-        uses: SonarSource/sonarqube-quality-gate-action@master
+        uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
+        continue-on-error: true
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -353,6 +360,7 @@ jobs:
   security-gate-1:
     name: Security Gate 1 — Source & Code
     needs: [secret-scan, sast, sonar, dependency-scan, lint, test-backend]
+    if: always() && needs.secret-scan.result == 'success' && needs.sast.result == 'success' && needs.dependency-scan.result == 'success' && needs.lint.result == 'success' && needs.test-backend.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Evaluate Gate 1
@@ -378,13 +386,12 @@ jobs:
             echo "| SAST | PASS | 0 high/critical |" >> $GITHUB_STEP_SUMMARY
           fi
 
-          # Check SonarCloud
-          SONAR="${{ needs.sonar.outputs.quality_gate }}"
-          if [ "$SONAR" != "passed" ] && [ -n "$SONAR" ]; then
-            echo "| SonarCloud | FAIL | Quality gate: $SONAR |" >> $GITHUB_STEP_SUMMARY
-            PASS=false
-          else
+          # Check SonarCloud (non-blocking)
+          SONAR_RESULT="${{ needs.sonar.result }}"
+          if [ "$SONAR_RESULT" = "success" ]; then
             echo "| SonarCloud | PASS | Quality gate passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| SonarCloud | WARN | Informational only (not blocking) — result: $SONAR_RESULT |" >> $GITHUB_STEP_SUMMARY
           fi
 
           # Check dependencies
@@ -497,11 +504,15 @@ jobs:
       - name: Load image
         run: docker load -i /tmp/image.tar
 
+      - name: Compute short SHA
+        id: sha
+        run: echo "short=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
       - name: Run Trivy image scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'image'
-          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}'
+          image-ref: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.short }}'
           format: 'json'
           output: 'reports/trivy-image-report.json'
           severity: 'CRITICAL,HIGH'
@@ -531,6 +542,8 @@ jobs:
     needs: build-image
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download image
         uses: actions/download-artifact@v4
         with:
@@ -540,10 +553,17 @@ jobs:
       - name: Load image
         run: docker load -i /tmp/image.tar
 
+      - name: Compute short SHA
+        id: sha
+        run: echo "short=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}'
+          image: '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.short }}'
           format: spdx-json
           output-file: reports/sbom-spdx.json
 

@@ -31,8 +31,7 @@ describe('Auth Middleware', () => {
   });
 
   it('should call next with decoded user for valid token', () => {
-    // Using the hardcoded secret from auth.js (V2 vulnerability)
-    const token = jwt.sign({ id: 'user-1', email: 'test@test.com', role: 'REPORTER' }, 'mysecret123');
+    const token = jwt.sign({ id: 'user-1', email: 'test@test.com', role: 'REPORTER' }, process.env.JWT_SECRET || 'test-secret-for-ci');
     req.headers.authorization = `Bearer ${token}`;
 
     authenticate(req, res, next);
@@ -43,7 +42,7 @@ describe('Auth Middleware', () => {
   });
 
   it('should return 401 for expired token', () => {
-    const token = jwt.sign({ id: 'user-1' }, 'mysecret123', { expiresIn: '0s' });
+    const token = jwt.sign({ id: 'user-1' }, process.env.JWT_SECRET || 'test-secret-for-ci', { expiresIn: '0s' });
     req.headers.authorization = `Bearer ${token}`;
 
     // Small delay to ensure token is expired

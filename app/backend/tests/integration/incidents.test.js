@@ -2,8 +2,8 @@ const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const app = require('../../src/app');
 
-// Generate a valid token using the hardcoded secret (V2)
-const token = jwt.sign({ id: 'user-1', email: 'test@test.com', role: 'REPORTER' }, 'mysecret123', { expiresIn: '1h' });
+// Generate a valid token using the environment JWT secret
+const token = jwt.sign({ id: 'user-1', email: 'test@test.com', role: 'REPORTER' }, process.env.JWT_SECRET || 'test-secret-for-ci', { expiresIn: '1h' });
 
 // Mock Prisma
 jest.mock('@prisma/client', () => {
