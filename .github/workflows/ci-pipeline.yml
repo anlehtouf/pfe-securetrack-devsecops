@@ -710,7 +710,7 @@ jobs:
           echo "### Image signed and verified" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================
-  # STAGE 22: Pipeline Summary
+  # STAGE 22: Pipeline Summary + Metrics Push
   # ============================================================
   pipeline-summary:
     name: Pipeline Summary
@@ -739,3 +739,56 @@ jobs:
           else
             echo "### PIPELINE VERDICT: BLOCKED" >> $GITHUB_STEP_SUMMARY
           fi
+
+      - name: Push metrics to Prometheus Pushgateway
+        if: vars.PUSHGATEWAY_URL != ''
+        continue-on-error: true
+        run: |
+          # Determine build status (1 = passed, 0 = failed)
+          if [ "${{ needs.security-gate-2.result }}" = "success" ]; then
+            BUILD_STATUS=1
+          else
+            BUILD_STATUS=0
+          fi
+
+          # Collect metrics from job outputs
+          SECRETS="${{ needs.secret-scan.outputs.findings }}"
+          SAST="${{ needs.sast.outputs.high_count }}"
+          TRIVY_CRITICAL="${{ needs.image-scan.outputs.critical }}"
+          DEPS_CRITICAL="${{ needs.dependency-scan.outputs.critical }}"
+          COVERAGE="${{ needs.test-backend.outputs.coverage }}"
+          POLICY="${{ needs.policy-check.outputs.violations }}"
+
+          # Default empty values to 0
+          SECRETS=${SECRETS:-0}
+          SAST=${SAST:-0}
+          TRIVY_CRITICAL=${TRIVY_CRITICAL:-0}
+          DEPS_CRITICAL=${DEPS_CRITICAL:-0}
+          COVERAGE=${COVERAGE:-0}
+          POLICY=${POLICY:-0}
+
+          # Build Prometheus text format payload
+          cat <<METRICS | curl -s --max-time 10 --data-binary @- "${{ vars.PUSHGATEWAY_URL }}/metrics/job/ci_pipeline/branch/${GITHUB_REF_NAME}/run/${GITHUB_RUN_NUMBER}"
+          # HELP ci_build_status Pipeline pass/fail (1=pass, 0=fail)
+          # TYPE ci_build_status gauge
+          ci_build_status $BUILD_STATUS
+          # HELP ci_gitleaks_findings Number of secrets detected by Gitleaks
+          # TYPE ci_gitleaks_findings gauge
+          ci_gitleaks_findings $SECRETS
+          # HELP ci_semgrep_high Number of high/critical SAST findings
+          # TYPE ci_semgrep_high gauge
+          ci_semgrep_high $SAST
+          # HELP ci_trivy_critical Critical CVEs in container image
+          # TYPE ci_trivy_critical gauge
+          ci_trivy_critical $TRIVY_CRITICAL
+          # HELP ci_deps_critical Critical CVEs in dependencies
+          # TYPE ci_deps_critical gauge
+          ci_deps_critical $DEPS_CRITICAL
+          # HELP ci_test_coverage Test coverage percentage
+          # TYPE ci_test_coverage gauge
+          ci_test_coverage $COVERAGE
+          # HELP ci_policy_violations OPA policy violations
+          # TYPE ci_policy_violations gauge
+          ci_policy_violations $POLICY
+          METRICS
+          echo "Metrics pushed to Pushgateway"

@@ -1,0 +1,97 @@
+groups:
+  - name: devsecops_security_alerts
+    rules:
+      # Alert if the latest pipeline build failed
+      - alert: PipelineBuildFailed
+        expr: ci_build_status == 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CI/CD pipeline build failed"
+          description: "The latest pipeline run on branch {{ $labels.branch }} failed security gates."
+
+      # Alert if Gitleaks finds any secrets in code
+      - alert: SecretsDetectedInCode
+        expr: ci_gitleaks_findings > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Secrets found in source code"
+          description: "Gitleaks detected {{ $value }} hardcoded secrets on branch {{ $labels.branch }}."
+
+      # Alert if SAST finds high/critical issues
+      - alert: SastHighFindings
+        expr: ci_semgrep_high > 0
+        for: 0m
+        labels:
+          severity: high
+        annotations:
+          summary: "SAST high/critical findings detected"
+          description: "Semgrep found {{ $value }} high/critical issues on branch {{ $labels.branch }}."
+
+      # Alert if container image has critical CVEs
+      - alert: ContainerCriticalCVEs
+        expr: ci_trivy_critical > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical CVEs in container image"
+          description: "Trivy found {{ $value }} critical vulnerabilities in the container image."
+
+      # Alert if dependency scan finds critical CVEs
+      - alert: DependencyCriticalCVEs
+        expr: ci_deps_critical > 0
+        for: 0m
+        labels:
+          severity: high
+        annotations:
+          summary: "Critical CVEs in dependencies"
+          description: "Trivy filesystem scan found {{ $value }} critical dependency vulnerabilities."
+
+      # Alert if OPA policy violations exist
+      - alert: PolicyViolations
+        expr: ci_policy_violations > 0
+        for: 0m
+        labels:
+          severity: high
+        annotations:
+          summary: "Container policy violations"
+          description: "Conftest found {{ $value }} Dockerfile policy violations."
+
+      # Alert if test coverage drops below 60%
+      - alert: LowTestCoverage
+        expr: ci_test_coverage < 60
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Test coverage below 60%"
+          description: "Test coverage is {{ $value }}% on branch {{ $labels.branch }}. Minimum threshold: 60%."
+
+  - name: backend_application_alerts
+    rules:
+      # Alert if error rate exceeds 5%
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+          / sum(rate(http_requests_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP 5xx error rate"
+          description: "Backend error rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      # Alert if p95 latency exceeds 2 seconds
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API latency (p95 > 2s)"
+          description: "95th percentile latency is {{ $value }}s."
