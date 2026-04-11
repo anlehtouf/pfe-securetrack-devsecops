@@ -60,6 +60,10 @@ infrastructure/grafana/data/
 *.sig
 *.pem
 
+# Docs build dependencies
+docs/package.json
+docs/package-lock.json
+
 # Misc
 *.tgz
 *.tar.gz
